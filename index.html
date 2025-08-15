@@ -1,65 +1,349 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="vi">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Minecraft Log Analyzer</title>
-  <style>
-    body {
-      background: #0f172a;
-      color: #f8fafc;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      min-height: 100vh;
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Binary Offset Diff Tool — Client-side</title>
+<style>
+:root{--bg:#0f1724;--card:#0b1220;--accent:#0ea5ff;--muted:#9ca3af;--ok:#10b981}
+body{font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial;background:linear-gradient(180deg,#071022 0%, #081229 100%);color:#e6eef8;margin:0;padding:28px}
+.container{max-width:1100px;margin:0 auto}
+h1{font-size:20px;margin:0 0 8px}
+.header{display:flex;gap:12px;align-items:center}
+.card{background:var(--card);border-radius:10px;padding:14px;box-shadow:0 6px 18px rgba(2,6,23,.6);}
+.row{display:flex;gap:12px;align-items:center;margin-bottom:10px}
+input[type=file]{color:transparent}
+label.small{font-size:13px;color:var(--muted)}
+.controls{display:flex;gap:10px;flex-wrap:wrap}
+button{background:var(--accent);border:none;padding:8px 12px;border-radius:8px;color:#012;color:cursor:pointer;font-weight:600}
+button.secondary{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
+.progress{height:10px;background:rgba(255,255,255,0.03);border-radius:999px;overflow:hidden}
+.progress > i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),#7dd3fc);width:0}
+.table-wrap{margin-top:14px;max-height:360px;overflow:auto;border-radius:8px}
+table{width:100%;border-collapse:collapse;font-family:monospace;font-size:13px}
+th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,0.03);text-align:left}
+th{position:sticky;top:0;background:rgba(11,18,32,0.6);backdrop-filter:blur(6px)}
+.badge{display:inline-block;background:rgba(255,255,255,0.03);padding:6px 8px;border-radius:999px;font-size:12px}
+.preview{white-space:pre-wrap;font-family:monospace;background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;margin-top:8px;overflow:auto;max-height:220px}
+.footer{margin-top:14px;display:flex;gap:10px;align-items:center}
+.small-muted{font-size:13px;color:var(--muted)}
+.controls input[type=number]{width:110px;padding:6px;border-radius:8px;border:none;background:rgba(255,255,255,0.02);color:inherit}
+.link{color:var(--accent);cursor:pointer}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <h1>Binary Offset Diff Tool (Client-side)</h1>
+      <div class="small-muted">So sánh 2 file nhị phân hoàn toàn trên trình duyệt — an toàn, không upload</div>
+    </div>
+    <div style="margin-left:auto" class="badge">Improved · chunked · export CSV/JSON</div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="row">
+      <div style="flex:1">
+        <div class="row" style="align-items:center">
+          <div style="flex:1">
+            <label class="small">File gốc (Original): <input id="fileA" type="file" /></label>
+          </div>
+          <div style="flex:1">
+            <label class="small">File chỉnh sửa (Modified): <input id="fileB" type="file" /></label>
+          </div>
+        </div>
+
+        <div class="controls" style="margin-top:10px">
+          <label class="small">Chunk size (bytes): <input id="chunkSize" type="number" value="4194304" /></label>
+          <label class="small">Context bytes: <input id="contextBytes" type="number" value="8" /></label>
+          <label class="small">Max preview bytes: <input id="maxPreview" type="number" value="32" /></label>
+
+          <button id="btnCompare">So sánh</button>
+          <button id="btnCancel" class="secondary" disabled>Huỷ</button>
+          <button id="btnClear" class="secondary">Xoá kết quả</button>
+        </div>
+
+        <div style="margin-top:12px">
+          <div class="small-muted">Progress Original</div>
+          <div class="progress"><i id="pA"></i></div>
+          <div class="small-muted" style="margin-top:6px">Progress Modified</div>
+          <div class="progress"><i id="pB"></i></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div id="out" class="card" style="margin-top:14px;display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div><strong id="summary"></strong> <span class="small-muted" id="sizes"></span></div>
+      <div>
+        <button id="exportCsv" class="secondary">Tải CSV</button>
+        <button id="exportJson" class="secondary">Tải JSON</button>
+        <button id="copyAll" class="secondary">Copy CSV</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="tbl">
+        <thead><tr><th>Offset (hex)</th><th>Offset (dec)</th><th>Length</th><th>Preview (orig)</th><th>Preview (mod)</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div id="previewPanel"></div>
+
+    <div class="footer">
+      <div class="small-muted">Note: nếu file rất lớn, tăng chunk size có thể nhanh hơn — nhưng tiêu tốn RAM khi preview.</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// Utility: format hex
+function toHex(n){ return '0x' + n.toString(16).padStart(8,'0'); }
+function slicePreviewHex(buffer, start, len){
+  const u = new Uint8Array(buffer, start, Math.min(len, buffer.byteLength - start));
+  return Array.from(u).map(b=>b.toString(16).padStart(2,'0')).join(' ');
+}
+
+let abortRequested = false;
+
+async function compareFiles() {
+  abortRequested = false;
+  const fileA = document.getElementById('fileA').files[0];
+  const fileB = document.getElementById('fileB').files[0];
+  const out = document.getElementById('out');
+  const summary = document.getElementById('summary');
+  const sizes = document.getElementById('sizes');
+  const pA = document.getElementById('pA');
+  const pB = document.getElementById('pB');
+  const tbody = document.querySelector('#tbl tbody');
+  const previewPanel = document.getElementById('previewPanel');
+  tbody.innerHTML = '';
+  previewPanel.innerHTML = '';
+
+  if (!fileA || !fileB) { alert('Chọn cả 2 file trước.'); return; }
+
+  const chunkSize = Number(document.getElementById('chunkSize').value) || 4*1024*1024;
+  const contextBytes = Number(document.getElementById('contextBytes').value) || 8;
+  const maxPreview = Number(document.getElementById('maxPreview').value) || 32;
+
+  document.getElementById('btnCancel').disabled = false;
+  document.getElementById('btnCompare').disabled = true;
+
+  out.style.display = 'block';
+  summary.textContent = 'Đang so sánh…';
+  sizes.textContent = '';
+
+  const lenA = fileA.size, lenB = fileB.size;
+  sizes.textContent = `| Original: ${lenA} bytes — Modified: ${lenB} bytes`;
+
+  let offset = 0;
+  const minLenTotal = Math.min(lenA, lenB);
+  const diffs = [];
+
+  function updateProgress(a,b){ pA.style.width = Math.round(a*100)+'%'; pB.style.width = Math.round(b*100)+'%'; }
+
+  // Loop over chunks up to minLenTotal
+  while (offset < minLenTotal) {
+    if (abortRequested) break;
+    const readLen = Math.min(chunkSize, minLenTotal - offset);
+    const [bufA, bufB] = await Promise.all([
+      fileA.slice(offset, offset + readLen).arrayBuffer(),
+      fileB.slice(offset, offset + readLen).arrayBuffer()
+    ]);
+
+    const a = new Uint8Array(bufA);
+    const b = new Uint8Array(bufB);
+    let i = 0;
+    while (i < a.length) {
+      if (abortRequested) break;
+      if (a[i] !== b[i]) {
+        const startGlobal = offset + i;
+        let j = i + 1;
+        while (j < a.length && a[j] !== b[j]) j++;
+        // If diff runs to the end of this chunk, it might continue in next chunk.
+        // We'll close range if next bytes equal, otherwise we'll continue in next iteration by keeping a flag.
+        // Save current range and mark if continues to next chunk by checking if j === a.length
+        const endGlobal = offset + j; // exclusive
+        diffs.push({start: startGlobal, end: endGlobal, previewA: slicePreviewHex(bufA, i, maxPreview), previewB: slicePreviewHex(bufB, i, maxPreview), continued: (j === a.length)});
+        i = j;
+      } else {
+        i++;
+      }
     }
 
-    header {
-      background-color: #1e293b;
-      width: 100%;
-      padding: 20px;
-      text-align: center;
-      font-size: 24px;
-      font-weight: bold;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-    }
+    offset += readLen;
+    updateProgress(Math.min(1, offset/lenA), Math.min(1, offset/lenB));
+  }
 
-    main {
-      max-width: 800px;
-      width: 100%;
-      padding: 20px;
-    }
+  // If abort was requested
+  if (abortRequested) {
+    summary.textContent = 'Đã huỷ.';
+    document.getElementById('btnCancel').disabled = true;
+    document.getElementById('btnCompare').disabled = false;
+    return;
+  }
 
-    .uploader {
-      background-color: #1e40af;
-      border-radius: 12px;
-      padding: 20px;
-      text-align: center;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-      margin-bottom: 20px;
+  // Merge contiguous ranges that touch or have continuation marks
+  const merged = [];
+  for (const d of diffs) {
+    if (!merged.length) { merged.push(Object.assign({}, d)); continue; }
+    const last = merged[merged.length-1];
+    // if this range starts <= last.end (overlap) or exactly equals last.end -> merge
+    if (d.start <= last.end) {
+      last.end = Math.max(last.end, d.end);
+      // update preview if needed (keep the earlier preview)
+      last.continued = last.continued || d.continued;
+    } else {
+      // If previous marked as continued and this starts exactly where previous ended, merge
+      if (last.continued && d.start === last.end) {
+        last.end = d.end;
+        last.continued = d.continued;
+      } else {
+        merged.push(Object.assign({}, d));
+      }
     }
+  }
 
-    input[type="file"] {
-      background: #f8fafc;
-      color: #1e293b;
-      padding: 10px;
-      border-radius: 8px;
-      border: none;
-      cursor: pointer;
-    }
+  // If file sizes differ, add tail region
+  if (lenA !== lenB) {
+    const start = Math.min(lenA, lenB);
+    const end = Math.max(lenA, lenB);
+    merged.push({start, end, previewA: (lenA>lenB? '(extra bytes)': '(truncated)'), previewB: (lenB>lenA? '(extra bytes)': '(truncated)'), continued:false});
+  }
 
-    .report {
-      background-color: #1e293b;
-      border-radius: 10px;
-      padding: 20px;
-      white-space: pre-wrap;
-      font-family: monospace;
-      margin-top: 10px;
-    }
+  // Render table
+  const tbodyHTML = merged.map((r, idx) => {
+    const len = r.end - r.start;
+    const previewA = typeof r.previewA === 'string' ? r.previewA : r.previewA || '';
+    const previewB = typeof r.previewB === 'string' ? r.previewB : r.previewB || '';
+    return `<tr data-idx="${idx}"><td>${toHex(r.start)}</td><td>${r.start}</td><td>${len}</td><td>${previewA}</td><td>${previewB}</td><td><button class=secondary data-idx="${idx}">Xem</button> <button class=secondary data-copy="${idx}">Copy hex</button></td></tr>`;
+  }).join('');
+  tbody.innerHTML = tbodyHTML;
 
+  summary.textContent = `Hoàn tất — tìm ${merged.length} vùng khác nhau`;
+
+  // store merged in element for later actions
+  out._data = {merged, fileA, fileB, maxPreview, contextBytes};
+
+  document.getElementById('btnCancel').disabled = true;
+  document.getElementById('btnCompare').disabled = false;
+
+}
+
+function clearResults(){
+  document.getElementById('out').style.display = 'none';
+  document.querySelector('#tbl tbody').innerHTML = '';
+  document.getElementById('previewPanel').innerHTML = '';
+}
+
+// click handlers for table buttons (delegation)
+document.addEventListener('click', async (ev)=>{
+  const t = ev.target;
+  if (t.id === 'btnCompare') return;
+  if (t.id === 'btnCancel') {
+    abortRequested = true; document.getElementById('btnCancel').disabled = true; return;
+  }
+  if (t.id === 'btnClear') { clearResults(); return; }
+
+  if (t.matches('button[data-idx]')) {
+    const idx = Number(t.getAttribute('data-idx'));
+    const out = document.getElementById('out');
+    const data = out._data;
+    if (!data) return;
+    const item = data.merged[idx];
+    // Show a detailed hex preview with context
+    const ctx = data.contextBytes || 8;
+    const max = data.maxPreview || 256;
+    const fileA = data.fileA, fileB = data.fileB;
+
+    const start = Math.max(0, item.start - ctx);
+    const end = Math.min(Math.max(fileA.size, fileB.size), item.end + ctx);
+    const len = end - start;
+
+    const [bufA, bufB] = await Promise.all([
+      (start < fileA.size) ? fileA.slice(start, end).arrayBuffer().catch(()=>null) : null,
+      (start < fileB.size) ? fileB.slice(start, end).arrayBuffer().catch(()=>null) : null
+    ]);
+
+    const showA = bufA ? Array.from(new Uint8Array(bufA)).map(x=>x.toString(16).padStart(2,'0')).join(' ') : '(no data)';
+    const showB = bufB ? Array.from(new Uint8Array(bufB)).map(x=>x.toString(16).padStart(2,'0')).join(' ') : '(no data)';
+
+    const previewPanel = document.getElementById('previewPanel');
+    previewPanel.innerHTML = `\n      <div class="preview"><strong>Offset range:</strong> ${toHex(item.start)} (${item.start}) — ${toHex(item.end)} (${item.end})<br><br>
+      <strong>Context start:</strong> ${toHex(start)} — length ${len} bytes<br><br>
+      <strong>Original:</strong>\n<pre>${truncateHex(showA, 20000)}</pre><br>
+      <strong>Modified:</strong>\n<pre>${truncateHex(showB, 20000)}</pre>
+      </div>`;
+  }
+
+  if (t.matches('button[data-copy]')) {
+    const idx = Number(t.getAttribute('data-copy'));
+    const out = document.getElementById('out');
+    const data = out._data;
+    if (!data) return;
+    const item = data.merged[idx];
+    // prepare CSV-like hex for the range (limited)
+    const start = item.start; const len = Math.min(1024, item.end - item.start);
+    const [bufA] = await Promise.all([ data.fileA.slice(start, start+len).arrayBuffer().catch(()=>null) ]);
+    const hex = bufA ? Array.from(new Uint8Array(bufA)).map(x=>x.toString(16).padStart(2,'0')).join(' ') : '(no data)';
+    navigator.clipboard.writeText(hex).then(()=>alert('Đã copy hex (orig) tới clipboard'))
+  }
+
+  if (t.id === 'exportCsv') {
+    const out = document.getElementById('out'); const data = out._data; if (!data) return;
+    const rows = data.merged.map(r=>({offset_hex: toHex(r.start), offset_dec: r.start, length: r.end-r.start, previewA: r.previewA, previewB: r.previewB}));
+    const csv = toCsv(rows);
+    downloadBlob(csv, 'diffs.csv', 'text/csv');
+  }
+
+  if (t.id === 'exportJson') {
+    const out = document.getElementById('out'); const data = out._data; if (!data) return;
+    const json = JSON.stringify({generated: new Date().toISOString(), diffs: data.merged}, null, 2);
+    downloadBlob(json, 'diffs.json', 'application/json');
+  }
+
+  if (t.id === 'copyAll') {
+    const out = document.getElementById('out'); const data = out._data; if (!data) return;
+    const rows = data.merged.map(r=>`${toHex(r.start)},${r.start},${r.end-r.start},"${r.previewA}","${r.previewB}"`).join('\n');
+    navigator.clipboard.writeText(rows).then(()=>alert('Copied CSV text to clipboard'));
+  }
+
+});
+
+function truncateHex(s, maxChars){ if (s.length <= maxChars) return s; return s.slice(0,maxChars) + '\n... (truncated)'; }
+
+function toCsv(rows){
+  if (!rows || !rows.length) return '';
+  const keys = Object.keys(rows[0]);
+  const lines = [keys.join(',')];
+  for (const r of rows) {
+    const vals = keys.map(k=>`"${String(r[k]).replace(/"/g,'""')}"`);
+    lines.push(vals.join(','));
+  }
+  return lines.join('\n');
+}
+
+function downloadBlob(content, filename, mime){
+  const blob = new Blob([content], {type: mime});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+// wire up buttons
+document.getElementById('btnCompare').addEventListener('click', compareFiles);
+document.getElementById('btnCancel').addEventListener('click', ()=>{ abortRequested = true; document.getElementById('btnCancel').disabled = true; });
+document.getElementById('btnClear').addEventListener('click', clearResults);
+
+document.getElementById('exportCsv').addEventListener('click', ()=>{ document.querySelector('button#exportCsv').click(); });
+document.getElementById('exportJson').addEventListener('click', ()=>{ document.querySelector('button#exportJson').click(); });
+
+</script>
+</body>
+</html>
     .legend {
       background-color: #0f172a;
       border-left: 4px solid #38bdf8;
@@ -143,3 +427,4 @@
   </script>
 </body>
 </html>
+
